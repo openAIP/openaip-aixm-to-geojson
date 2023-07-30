@@ -2,6 +2,7 @@ const checkTypes = require('check-types');
 const convert = require('xml-js');
 const {
     featureCollection: createFeatureCollection,
+    polygon: createPolygon,
     point: createPoint,
     lineArc: createArc,
     bearing: calcBearing,
@@ -109,12 +110,12 @@ class AirspaceConverter {
             throw new Error("Missing or invalid parameter 'serviceFileBuffer'");
         }
 
-        var aixmJson = convert.xml2js(buffer, {compact: true, spaces: 4});
-        // build options for createAirspaceFeatures
+        var aixmJson = convert.xml2js(buffer, { compact: true, spaces: 4 });
+        // build options for createAirspaceFeature
         const createOptions = {};
         const geojsonFeatures = [];
         for (const airspace of aixmJson['message:AIXMBasicMessage']['message:hasMember']) {
-            geojsonFeatures.push(...(await this.createAirspaceFeatures(airspace, createOptions)));
+            geojsonFeatures.push(...(await this.createAirspaceFeature(airspace, createOptions)));
         }
 
         const geojson = createFeatureCollection(geojsonFeatures);
@@ -138,7 +139,7 @@ class AirspaceConverter {
      * @return {Object}
      * @private
      */
-    async createAirspaceFeatures(airspaceJson, options) {
+    async createAirspaceFeature(airspaceJson, options) {
         const {} = options;
         const features = [];
 
@@ -150,73 +151,75 @@ class AirspaceConverter {
         const localType = properties['aixm:localType']?._text;
         const icaoClass = properties['aixm:designatorICAO']?._text;
         const activation = properties['aixm:activation'];
-        const geometryComponent = properties['aixm:geometryComponent']['aixm:AirspaceGeometryComponent']['aixm:theAirspaceVolume']['aixm:AirspaceVolume'];
+        const geometryComponent =
+            properties['aixm:geometryComponent']['aixm:AirspaceGeometryComponent']['aixm:theAirspaceVolume'][
+                'aixm:AirspaceVolume'
+            ];
 
         // set identifier for error messages
         this.ident = name;
         // map to only type/class combination
-        const {
-            type: mappedType,
-            class: mappedClass,
-            metaProps,
-        } = this.mapClassAndType(type, localType, icaoClass);
+        const { type: mappedType, class: mappedClass, metaProps } = this.mapClassAndType(type, localType, icaoClass);
 
-        // for each airspace geometry defined in AIXM block, create a GeoJSON feature
-        for (const geometryDefinition of geometry) {
-            const { seqno, upper, lower, boundary } = geometryDefinition;
-            // set sequence number for error messages, use "0" if no sequence number is defined
-            this.seqno = seqno || 0;
+        const upperLimit = geometryComponent['aixm:upperLimit'];
+        const upperLimitReference = geometryComponent['aixm:upperLimitReference'];
+        const lowerLimit = geometryComponent['aixm:lowerLimit'];
+        const lowerLimitReference = geometryComponent['aixm:lowerLimitReference'];
+        const width = geometryComponent['aixm:width'];
+        const surface = geometryComponent['aixm:horizontalProjection']['aixm:Surface'];
 
-            const upperCeiling = this.createCeiling(upper);
-            const lowerCeiling = this.createCeiling(lower);
-            let geometry = this.createPolygonGeometry(boundary);
+        const upperCeiling = this.createCeiling(upperLimit, upperLimitReference);
+        const lowerCeiling = this.createCeiling(lowerLimit, lowerLimitReference);
+        const feature = this.createPolygonFeature(surface, width);
 
-            if (this.config.fixGeometries) {
-                geometry = this.fixGeometry(geometry);
-            }
-            if (this.config.validateGeometries) {
-                const { isValid, selfIntersect } = this.validateGeometry(geometry);
-                if (isValid === false) {
-                    let message = `Invalid geometry for airspace '${this.ident}' in sequence number '${this.seqno}'`;
-                    if (selfIntersect != null) {
-                        message += `: Self intersection at ${JSON.stringify(selfIntersect)}`;
-                    }
-                    throw new Error(message);
+        let geometry = feature.geometry;
+        if (this.config.fixGeometries) {
+            geometry = this.fixGeometry(feature.geometry);
+        }
+        if (this.config.validateGeometries) {
+            const { isValid, selfIntersect } = this.validateGeometry(geometry);
+            if (isValid === false) {
+                let message = `Invalid geometry for airspace '${this.ident}' in sequence number '${this.seqno}'`;
+                if (selfIntersect != null) {
+                    message += `: Self intersection at ${JSON.stringify(selfIntersect)}`;
                 }
+                throw new Error(message);
             }
-            const feature = {
-                type: 'Feature',
-                // set "base" airspace properties that is common to all airspaces defined in AIXM  block. Each AIXM block can define
-                // multiple airspaces, all with the same base properties.
-                properties: {
-                    ...{
-                        name,
-                        type: mappedType,
-                        class: mappedClass,
-                        upperCeiling,
-                        lowerCeiling,
-                        activatedByNotam: rules?.includes('NOTAM') === true,
-                        // set default value, will be overwritten by "metaProps" if applicable
-                        activity: 'NONE',
-                        remarks: rules == null ? null : rules.join(', '),
-                    },
-                    // merges updated field value for fields, e.g. "activity"
-                    ...metaProps,
+        }
+        const polygonFeature = {
+            type: 'Feature',
+            // set "base" airspace properties that is common to all airspaces defined in AIXM  block. Each AIXM block can define
+            // multiple airspaces, all with the same base properties.
+            properties: {
+                ...{
+                    name,
+                    type: mappedType,
+                    class: mappedClass,
+                    upperCeiling,
+                    lowerCeiling,
+                    activatedByNotam: rules?.includes('NOTAM') === true,
+                    // set default value, will be overwritten by "metaProps" if applicable
+                    activity: 'NONE',
+                    remarks: rules == null ? null : rules.join(', '),
                 },
-                geometry,
-            };
-            // add frequency property if services are available and mapping property "id" is set
-            if (id != null && services != null) {
-                feature.properties.groundService = await this.createGroundServiceProperty(id, services);
-            }
-
-            features.push(cleanDeep(feature));
-            // IMPORTANT reset internal state for next airspace
-            this.reset();
+                // merges updated field value for fields, e.g. "activity"
+                ...metaProps,
+            },
+            geometry,
+        };
+        // add frequency property if services are available and mapping property "id" is set
+        if (id != null && services != null) {
+            feature.properties.groundService = await this.createGroundServiceProperty(id, services);
         }
 
-        return features;
+        features.push(cleanDeep(feature));
+        // IMPORTANT reset internal state for next airspace
+        this.reset();
+
+        return polygonFeature;
     }
+
+    createGeometry(geometryComponent) {}
 
     /**
      * Maps ground service frequency to airspace if possible. Will return null if no mapping is found.
@@ -391,7 +394,7 @@ class AirspaceConverter {
     }
 
     /**
-     * Converts a ceiling definition, e.g. "1500 ft" or "FL65" to a ceiling object, e.g.
+     * Converts a AIXM limit object to
      * "{
      *      "value": 1500,
      *      "unit": "FT",
@@ -400,47 +403,24 @@ class AirspaceConverter {
      *
      *  This function assumes that only unit "ft" or "FL" or "SFC" is used in the ceiling definition.
      *
-     * @param {string} ceilingDefinition
+     * @param {Object} limit
+     * @param {Object} referenceDatum
      * @return {Object}
      */
-    createCeiling(ceilingDefinition) {
-        // check that ceiling definition is in expected format
-        const isValidSurfaceDefinition = REGEX_CEILING_SURFACE.test(ceilingDefinition);
-        const isValidFeetDefinition = REGEX_CEILING_FEET.test(ceilingDefinition);
-        const isValidFlightLevelDefinition = REGEX_CEILING_FLIGHT_LEVEL.test(ceilingDefinition);
+    createCeiling(limit, referenceDatum) {
+        const limitValue = limit?._text;
+        const limitUnitValue = limit?._attributes?.uom;
+        const referenceDatumValue = referenceDatum?._text;
 
-        if (
-            isValidFeetDefinition === false &&
-            isValidFlightLevelDefinition === false &&
-            isValidSurfaceDefinition === false
-        ) {
-            throw new Error(
-                `Invalid ceiling definition '${ceilingDefinition}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
+        if (limitValue == null && limitUnitValue == null && referenceDatumValue == null) {
+            throw new Error(`Invalid ceiling definition for airspace '${this.ident}'`);
         }
 
-        if (isValidSurfaceDefinition) {
-            // always use instead of SFC
-            return { value: 0, unit: 'FT', referenceDatum: 'GND' };
-        } else if (isValidFeetDefinition) {
-            // check for "default" altitude definition, e.g. 16500ft MSL or similar
-            const altitudeParts = REGEX_CEILING_FEET.exec(ceilingDefinition);
-            // get altitude parts
-            let value = parseFloat(altitudeParts[1]);
-            let unit = altitudeParts[3].toUpperCase();
-            let referenceDatum = altitudeParts[4] || 'MSL';
-            // always use instead of SFC
-            referenceDatum = referenceDatum === 'SFC' ? 'GND' : referenceDatum.toUpperCase();
-
-            return { value, unit, referenceDatum };
-        } else if (isValidFlightLevelDefinition) {
-            // check flight level altitude definition
-            const altitudeParts = REGEX_CEILING_FLIGHT_LEVEL.exec(ceilingDefinition);
-            // get altitude parts
-            let value = parseInt(altitudeParts[1]);
-
-            return { value, unit: 'FL', referenceDatum: 'STD' };
-        }
+        return {
+            value: limitValue,
+            unit: limitUnitValue,
+            referenceDatum: referenceDatumValue,
+        };
     }
 
     /**
@@ -450,271 +430,53 @@ class AirspaceConverter {
      * @return {Object}
      * @private
      */
-    createPolygonGeometry(boundary) {
-        // Each object on the boundary array resolves into a GeoJSON LineString geometry. Resolve each boundary object into a
-        // list of coordinates pairs and then create a GeoJSON Polygon geometry from them.
-        // Also make sure the resulting Polygon geometry is valid.
-        for (const boundaryDefinition of boundary) {
-            const boundaryType = Array.from(Object.keys(boundaryDefinition))[0];
+    createPolygonFeature(boundary, width) {
+        // depending on the geometry type, choose specific geometry type handler
+        const geometryDefinition = boundary['gml:patches'];
+        const isPolygonPatch = geometryDefinition.hasOwnProperty('gml:PolygonPatch');
 
-            switch (boundaryType) {
-                case 'line': {
-                    const coordinates = this.createCoordinatesFromLine(boundaryDefinition);
-                    this.boundaryCoordinates.push(...coordinates);
-                    break;
-                }
-                case 'arc': {
-                    const coordinates = this.createCoordinatesFromArc(boundaryDefinition);
-                    this.boundaryCoordinates.push(...coordinates);
-                    break;
-                }
-                case 'circle': {
-                    const coordinates = this.createCoordinatesFromCircle(boundaryDefinition);
-                    this.boundaryCoordinates.push(...coordinates);
-                    break;
-                }
-                default:
-                    throw new Error(
-                        `Unsupported boundary type '${boundaryType}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-                    );
+        if (isPolygonPatch) {
+            return this.createGeometryFromPolygonPatch(geometryDefinition);
+        } else {
+            throw new Error(
+                `Unsupported geometry type '${Object.values(geometryDefinition).pop()}' for airspace '${this.ident}'`
+            );
+        }
+    }
+
+    /**
+     * Creates a geometry from a polygon patch.
+     *
+     * @param {Object} geometryDefinition - The definition of the geometry.
+     */
+    createGeometryFromPolygonPatch(geometryDefinition) {
+        const polygonPatch = geometryDefinition['gml:PolygonPatch'];
+        const exterior = polygonPatch['gml:exterior'];
+        const ring = exterior['gml:Ring'];
+        const curveMember = ring['gml:curveMember'];
+        const curve = curveMember['gml:Curve'];
+        const segments = curve['gml:segments'];
+        const geodesicString = segments['gml:GeodesicString'];
+
+        // extract the coordinates from the segments
+
+        const extractCoordinates = function (positions) {
+            const coordinates = [];
+            for (const pos of positions) {
+                const [longitude, latitude] = pos?._text?.split(' ');
+                coordinates.push([parseFloat(longitude), parseFloat(latitude)]);
             }
+
+            return coordinates;
+        };
+
+        let coords = [];
+        for (const pos of geodesicString) {
+            const coordinates = extractCoordinates(pos['gml:pos']);
+            coords = coords.concat(coordinates);
         }
 
-        const lineString = createLineString(this.boundaryCoordinates);
-        // create polygon geometry from LineString geometry using turfjs
-        // add first coordinate pair to end of list to close the polygon if first and last item do not match
-        let polygonFeature = lineToPolygon(lineString, { autoComplete: true, mutate: true, orderCoords: true });
-        // make sure the polygon follows the right-hand rule
-        polygonFeature = rewind(polygonFeature, false);
-
-        return polygonFeature.geometry;
-    }
-
-    /**
-     * Creates a GeoJSON LineString geometry from a AIXM airspace boundary "line" definition.
-     *
-     * @param {Object} boundaryDefinition
-     * @return {Array}
-     * @private
-     */
-    createCoordinatesFromLine(boundaryDefinition) {
-        const coordinates = boundaryDefinition?.line;
-        if (Array.isArray(coordinates) === false || coordinates.length === 0) {
-            throw new Error(
-                `Invalid line boundary definition '${JSON.stringify(boundaryDefinition)}' for airspace '${
-                    this.ident
-                }' in sequence number '${this.seqno}'`
-            );
-        }
-        const coords = [];
-        for (const coordinate of coordinates) {
-            // validate coordinate string
-            if (REGEX_COORDINATES.test(coordinate) === false) {
-                throw new Error(
-                    `Invalid coordinate '${coordinate}' in line boundary definition '${JSON.stringify(
-                        boundaryDefinition
-                    )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-                );
-            }
-            const coord = this.transformCoordinates(coordinate);
-            coords.push(coord);
-        }
-
-        return coords;
-    }
-
-    /**
-     * Creates a GeoJSON LineString geometry from a AIXM airspace boundary "arc" definition.
-     *
-     * @param {Object} boundaryDefinition
-     * @return {Array}
-     * @private
-     */
-    createCoordinatesFromArc(boundaryDefinition) {
-        // eslint-disable-next-line no-unsafe-optional-chaining
-        const { dir, radius, centre, to } = boundaryDefinition?.arc;
-        // get last coordinates pair from boundary coordinates
-        const lastCoord = this.boundaryCoordinates[this.boundaryCoordinates.length - 1];
-
-        const isValidDir = REGEX_ARC_DIR.test(dir);
-        const isValidRadius = REGEX_ARC_RADIUS.test(radius);
-        const isValidCentre = REGEX_COORDINATES.test(centre);
-        const isValidTo = REGEX_COORDINATES.test(to);
-
-        if (lastCoord == null) {
-            throw new Error(
-                `Invalid arc boundary definition '${JSON.stringify(boundaryDefinition)}' for airspace '${
-                    this.ident
-                }' in sequence number '${this.seqno}'. Previous coordinate pair is missing.`
-            );
-        }
-        if (dir == null || radius == null || centre == null || to == null) {
-            throw new Error(
-                `Invalid arc boundary definition '${JSON.stringify(boundaryDefinition)}' for airspace '${
-                    this.ident
-                }' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidDir === false) {
-            throw new Error(
-                `Invalid arc 'direction' '${dir}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidRadius === false) {
-            throw new Error(
-                `Invalid arc 'radius' '${radius}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidCentre === false) {
-            throw new Error(
-                `Invalid arc 'centre' '${centre}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidTo === false) {
-            throw new Error(
-                `Invalid arc 'to' '${to}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-
-        // check if arc is clockwise or counter-clockwise - if counter-clockwise, switch start and end point later
-        const isClockwise = dir === 'cw';
-        // get last coordinate pair
-        const [fromLon, fromLat] = lastCoord;
-        // get start point
-        let startPoint = createPoint([fromLon, fromLat]);
-        // get center point
-        const [centerLon, centerLat] = this.transformCoordinates(centre);
-        const centerPoint = createPoint([centerLon, centerLat]);
-        // get end point
-        const [toLon, toLat] = this.transformCoordinates(to);
-        let endPoint = createPoint([toLon, toLat]);
-        // switch start and end point if arc is counter-clockwise
-        if (isClockwise === false) {
-            const tmp = startPoint;
-            startPoint = endPoint;
-            endPoint = tmp;
-        }
-        // convert radius in NM to KM
-        const radiusValue = radius.split(' ')[0].trim();
-        const radiusKm = parseFloat(radiusValue) * 1.852;
-        // calculate start and end bearing
-        const startBearing = calcBearing(centerPoint, startPoint);
-        const endBearing = calcBearing(centerPoint, endPoint);
-        // create arc linestring feature
-        const arc = createArc(centerPoint, radiusKm, startBearing, endBearing, {
-            steps: this.config.geometryDetail,
-            units: 'kilometers',
-        });
-
-        // if counter-clockwise, reverse coordinate list order
-        return isClockwise ? arc.geometry.coordinates : arc.geometry.coordinates.reverse();
-    }
-
-    /**
-     * Creates a GeoJSON LineString geometry from a AIXM airspace boundary "circle" definition.
-     *
-     * @param {Object} boundaryDefinition
-     * @return {Array}
-     * @private
-     */
-    createCoordinatesFromCircle(boundaryDefinition) {
-        // eslint-disable-next-line no-unsafe-optional-chaining
-        const { radius, centre } = boundaryDefinition?.circle;
-
-        const isValidRadius = REGEX_ARC_RADIUS.test(radius);
-        const isValidCentre = REGEX_COORDINATES.test(centre);
-
-        if (radius == null || centre == null) {
-            throw new Error(
-                `Invalid arc boundary definition '${JSON.stringify(boundaryDefinition)}' for airspace '${
-                    this.ident
-                }' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidRadius === false) {
-            throw new Error(
-                `Invalid arc 'radius' '${radius}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-        if (isValidCentre === false) {
-            throw new Error(
-                `Invalid arc 'centre' '${centre}' in arc boundary definition '${JSON.stringify(
-                    boundaryDefinition
-                )}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
-
-        // convert radius in NM to KM
-        const radiusValue = radius.split(' ')[0].trim();
-        const radiusKm = parseFloat(radiusValue) * 1.852;
-        // get center point
-        const [centerLon, centerLat] = this.transformCoordinates(centre);
-        const centerPoint = createPoint([centerLon, centerLat]);
-
-        const { geometry } = createCircle(centerPoint, radiusKm, {
-            steps: this.config.geometryDetail,
-            units: 'kilometers',
-        });
-        const [coordinates] = geometry.coordinates;
-
-        return coordinates;
-    }
-
-    /**
-     * Transforms a parsed coordinate string into a [lon,lat] coordinate pair.
-     *
-     * @param {String} coordinateString
-     * @return {Array}
-     * @private
-     */
-    transformCoordinates(coordinateString) {
-        try {
-            // convert to coordinates pair that parser can understand
-            const formatLatitude = function (coord) {
-                // split coordinate into parts
-                coord = coord.trim();
-                // handle latitudes
-                const deg = coord.substring(0, 2);
-                const min = coord.substring(2, 4);
-                const sec = coord.substring(4, 6);
-                const ordinalDir = coord.substring(6, 7);
-
-                return `${deg}:${min}:${sec} ${ordinalDir}`;
-            };
-            const formatLongitude = function (coord) {
-                // split coordinate into parts
-                coord = coord.trim();
-                // handle latitudes
-                const deg = coord.substring(0, 3);
-                const min = coord.substring(3, 5);
-                const sec = coord.substring(5, 7);
-                const ordinalDir = coord.substring(7, 8);
-
-                return `${deg}:${min}:${sec} ${ordinalDir}`;
-            };
-
-            const [coordLat, coordLon] = coordinateString.split(' ');
-            let lat = formatLatitude(coordLat);
-            let lon = formatLongitude(coordLon);
-            const parserCoordinate = `${lat},${lon}`;
-            const coord = new Coordinates(parserCoordinate);
-
-            return [coord.getLongitude(), coord.getLatitude()];
-        } catch (e) {
-            throw new Error(
-                `Failed to transform coordinates '${coordinateString}' for airspace '${this.ident}' in sequence number '${this.seqno}'`
-            );
-        }
+        return createPolygon([coords]);
     }
 
     /**
