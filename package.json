@@ -1,0 +1,69 @@
+{
+    "name": "@openaip/aixm-to-geojson",
+    "version": "0.5.0",
+    "description": "Converts AIXM to a simplified GeoJSON.",
+    "keywords": [
+        "openaip",
+        "aixm",
+        "format",
+        "geosjon"
+    ],
+    "authors": [
+        {
+            "name": "Stephan Besser",
+            "email": "stephan@openaip.net",
+            "homepage": "https://www.openaip.net",
+            "role": "Lead developer"
+        }
+    ],
+    "main": "index.js",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/openAIP/openaip-aixm-to-geojson.git"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com/"
+    },
+    "bugs": {
+        "url": "https://github.com/openAIP/openaip-aixm-to-geojson/issues"
+    },
+    "homepage": "https://github.com/openAIP/openaip-aixm-to-geojson#readme",
+    "scripts": {
+        "test": "TZ='UTC' NODE_ENV=test jest --forceExit -c jest.config.js tests/**",
+        "test-watch": "TZ='UTC' NODE_ENV=test jest --forceExit -c jest.config.js tests/** --watch",
+        "lint": "eslint -c .eslintrc.js .",
+        "run-security-audit": "npm audit --omit=dev",
+        "bump-version": "bump -c 'version bump to ' -tp",
+        "update-packages": "ncu --target minor --upgrade --reject jsts && npm install"
+    },
+    "dependencies": {
+        "@mapbox/geojson-rewind": "^0.5.2",
+        "@turf/turf": "^6.5.0",
+        "ajv": "^8.12.0",
+        "ajv-errors": "^3.0.0",
+        "ajv-formats": "^2.1.1",
+        "ajv-keywords": "^5.1.0",
+        "check-types": "^11.2.2",
+        "clean-deep": "^3.4.0",
+        "coordinate-parser": "^1.0.7",
+        "jsts": "<=2.6.1",
+        "xml-js": "^1.6.11"
+    },
+    "devDependencies": {
+        "@babel/eslint-parser": "^7.19.1",
+        "@types/check-types": "^7.3.4",
+        "@types/jest": "^27.5.2",
+        "commander": "^2.20.3",
+        "eslint": "^8.35.0",
+        "eslint-config-prettier": "^8.7.0",
+        "eslint-plugin-import": "^2.27.5",
+        "eslint-plugin-only-warn": "^1.1.0",
+        "eslint-plugin-prettier": "^4.2.1",
+        "jest": "^27.5.1",
+        "nodemon": "^2.0.21",
+        "npm-check-updates": "^16.7.10",
+        "prettier": "^2.8.4",
+        "version-bump-prompt": "^6.1.0"
+    }
+}

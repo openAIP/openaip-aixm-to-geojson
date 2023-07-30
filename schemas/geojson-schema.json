@@ -1,0 +1,230 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://adhoc-schemas.openaip.net/schemas/parsed-aixm-airspace.json",
+    "description": "JSON Schema for the GeoJSON FeatureCollection returned by this converter.",
+    "type": "object",
+    "properties": {
+        "type": {
+            "type": "string",
+            "enum": [
+                "FeatureCollection"
+            ],
+            "description": "A GeoJSON FeatureCollection object that contains all airspace features."
+        },
+        "features": {
+            "type": "array",
+            "items": {
+                "allOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "Feature"
+                                ]
+                            },
+                            "properties": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "description": "The airspace's name."
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "CTA",
+                                            "TMA",
+                                            "CTR",
+                                            "ATZ",
+                                            "DANGER",
+                                            "PROHIBITED",
+                                            "RESTRICTED",
+                                            "WARNING",
+                                            "AERIAL_SPORTING_RECREATIONAL",
+                                            "RMZ",
+                                            "TMZ",
+                                            "MATZ",
+                                            "GLIDING_SECTOR"
+                                        ],
+                                        "description": "The airspace's type."
+                                    },
+                                    "class": {
+                                        "type": "string",
+                                        "enum": [
+                                            "A",
+                                            "B",
+                                            "C",
+                                            "D",
+                                            "E",
+                                            "F",
+                                            "G",
+                                            "UNCLASSIFIED"
+                                        ],
+                                        "description": "The airspace's class."
+                                    },
+                                    "activity": {
+                                        "type": "string",
+                                        "enum": [
+                                            "NONE",
+                                            "PARACHUTING",
+                                            "AEROBATICS",
+                                            "AEROCLUB_AERIAL_WORK",
+                                            "ULM",
+                                            "HANG_GLIDING"
+                                        ],
+                                        "description": "Property that adds metadata about specific type of arial/sporting areas. Is 'NONE' by default."
+                                    },
+                                    "upperCeiling": {
+                                        "$ref": "#/definitions/verticalLimit"
+                                    },
+                                    "lowerCeiling": {
+                                        "$ref": "#/definitions/verticalLimit"
+                                    },
+                                    "groundService": {
+                                        "type": "object",
+                                        "properties": {
+                                            "callsign": { "type": "string" , "example": "ABERDEEN APPROACH"},
+                                            "frequency": { "type": "string", "example": "118.000" }
+                                        },
+                                        "description": "The ground service callsign and frequency if available.",
+                                        "required": [
+                                            "callsign",
+                                            "frequency"
+                                        ],
+                                        "additionalProperties": false
+                                    },
+                                    "activatedByNotam": { "type": "boolean", "description": "If true, the airspace is activated by a NOTAM." },
+                                    "remarks": {
+                                        "type": "string",
+                                        "description": "A remarks field. If available, this will contain content of the parsed 'rules' list to add more metadata on the airspace."
+                                    }
+                                },
+                                "required": [
+                                    "name",
+                                    "type",
+                                    "class",
+                                    "upperCeiling",
+                                    "lowerCeiling",
+                                    "activatedByNotam",
+                                    "activity"
+                                ],
+                                "additionalProperties": false
+                            },
+                            "geometry": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "Polygon"
+                                        ]
+                                    },
+                                    "coordinates": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "array",
+                                                "items": false,
+                                                "prefixItems": [
+                                                    {
+                                                        "type": "number",
+                                                        "minimum": -180,
+                                                        "maximum": 180
+                                                    },
+                                                    {
+                                                        "type": "number",
+                                                        "minimum": -90,
+                                                        "maximum": 90
+                                                    }
+                                                ],
+                                                "minItems": 2,
+                                                "maxItems": 2
+                                            },
+                                            "minItems": 4
+                                        },
+                                        "minItems": 1,
+                                        "maxItems": 1
+                                    }
+                                },
+                                "required": [
+                                    "type",
+                                    "coordinates"
+                                ],
+                                "additionalProperties": false,
+                                "example": {
+                                    "type": "Polygon",
+                                    "coordinates": [
+                                        [
+                                            [
+                                                9.1234,
+                                                45.42432
+                                            ],
+                                            [
+                                                10.1234,
+                                                45.42432
+                                            ],
+                                            [
+                                                10.1234,
+                                                47.42432
+                                            ],
+                                            [
+                                                9.1234,
+                                                45.42432
+                                            ]
+                                        ]
+                                    ]
+                                }
+                            }
+                        },
+                        "required": [
+                            "type",
+                            "properties",
+                            "geometry"
+                        ],
+                        "additionalProperties": false
+                    }
+                ]
+            }
+        }
+    },
+    "required": [
+        "type",
+        "features"
+    ],
+    "additionalProperties": false,
+    "definitions": {
+        "verticalLimit": {
+            "type": "object",
+            "properties": {
+                "value": {
+                    "type": "integer"
+                },
+                "unit": {
+                    "type": "string",
+                    "enum": [
+                        "FT",
+                        "FL"
+                    ]
+                },
+                "referenceDatum": {
+                    "type": "string",
+                    "enum": [
+                        "GND",
+                        "STD",
+                        "MSL"
+                    ]
+                }
+            },
+            "required": [
+                "value",
+                "unit",
+                "referenceDatum"
+            ],
+            "description": "Defines an airspace vertical limit. The vertical limit is a combination of an integer value, a measurement unit and a reference datum.",
+            "additionalProperties": false
+        }
+    }
+}
