@@ -233,6 +233,7 @@ class AirspaceConverter {
      */
     createHoursOfOperation(activation) {
         // TODO implement
+        return null;
     }
 
     /**
