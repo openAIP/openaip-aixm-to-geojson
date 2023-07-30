@@ -1,7 +1,7 @@
 # AIXM to GeoJSON Converter
 
 A utility that converts AIXM format into GeoJSON for Node. This tool is intended to work with the AIXM format
-[AIXM format](https://www.faa.gov/about/office_org/headquarters_offices/ato/service_units/mission_support/aixm#:~:text=AIXM%20is%20a%20model%20that,information%20about%20the%20aeronautical%20data.). Currently, the logic only 
+[AIXM format](https://www.aixm.aero/). Currently, the logic only 
 supports reading `airspace` AIXM definitions.
 
 Internally, the logic uses parts of our [OpenAIR Parser](https://github.com/openAIP/openaip-openair-parser) to also validate the
