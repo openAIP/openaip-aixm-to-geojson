@@ -4,7 +4,6 @@ const {
     featureCollection: createFeatureCollection,
     polygon: createPolygon,
     point: createPoint,
-    lineArc: createArc,
     bearing: calcBearing,
     lineString: createLineString,
     lineToPolygon,
@@ -12,10 +11,7 @@ const {
     area: getArea,
     envelope,
     distance,
-    circle: createCircle,
 } = require('@turf/turf');
-const Coordinates = require('coordinate-parser');
-const rewind = require('@mapbox/geojson-rewind');
 const jsts = require('jsts');
 const cleanDeep = require('clean-deep');
 const Ajv = require('ajv/dist/2020');
@@ -26,12 +22,6 @@ const DEFAULT_CONFIG = require('./default-config');
 const ALLOWED_TYPES = ['CTA', 'TMA', 'CTR_P', 'CTR', 'ATZ', 'OTHER', 'D', 'P', 'R'];
 const ALLOWED_LOCALTYPES = ['MATZ', 'GLIDER', 'RMZ', 'TMZ'];
 const ALLOWED_CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'NO'];
-const REGEX_CEILING_SURFACE = /^(SFC)$/;
-const REGEX_CEILING_FEET = /^(\d+(\.\d+)?)\s*(ft|FT)?\s*(SFC)?$/;
-const REGEX_CEILING_FLIGHT_LEVEL = /^FL\s*(\d{2,})?$/;
-const REGEX_COORDINATES = /^[0-9]{6}[NS]\s+[0-9]{7}[EW]$/;
-const REGEX_ARC_DIR = /^(cw|ccw)$/;
-const REGEX_ARC_RADIUS = /^(\d+(\.\d+)?)\s*(NM|nm)?$/;
 const GEOJSON_SCHEMA = require('../schemas/geojson-schema.json');
 
 class AirspaceConverter {
@@ -85,9 +75,6 @@ class AirspaceConverter {
 
         // used in error messages to better identify the airspace that caused the error
         this.ident = null;
-        this.seqno = null;
-        // keep track of all calculated coordinates for the currently processed airspace boundary
-        this.boundaryCoordinates = [];
     }
 
     /**
@@ -150,11 +137,12 @@ class AirspaceConverter {
         const type = properties['aixm:type']?._text;
         const localType = properties['aixm:localType']?._text;
         const icaoClass = properties['aixm:designatorICAO']?._text;
-        const activation = properties['aixm:activation'];
         const geometryComponent =
             properties['aixm:geometryComponent']['aixm:AirspaceGeometryComponent']['aixm:theAirspaceVolume'][
                 'aixm:AirspaceVolume'
             ];
+        const featureLifetime = properties['aixm:featureLifetime'];
+        const activation = properties['aixm:activation']['aixm:AirspaceActivation'];
 
         // set identifier for error messages
         this.ident = name;
@@ -167,11 +155,11 @@ class AirspaceConverter {
         const lowerLimitReference = geometryComponent['aixm:lowerLimitReference'];
         const width = geometryComponent['aixm:width'];
         const surface = geometryComponent['aixm:horizontalProjection']['aixm:Surface'];
-
         const upperCeiling = this.createCeiling(upperLimit, upperLimitReference);
         const lowerCeiling = this.createCeiling(lowerLimit, lowerLimitReference);
+        const activationPeriod = this.createActivationPeriod(featureLifetime);
+        const hoursOfOperation = this.createHoursOfOperation(activation);
         const feature = this.createPolygonFeature(surface, width);
-
         let geometry = feature.geometry;
         if (this.config.fixGeometries) {
             geometry = this.fixGeometry(feature.geometry);
@@ -179,7 +167,7 @@ class AirspaceConverter {
         if (this.config.validateGeometries) {
             const { isValid, selfIntersect } = this.validateGeometry(geometry);
             if (isValid === false) {
-                let message = `Invalid geometry for airspace '${this.ident}' in sequence number '${this.seqno}'`;
+                let message = `Invalid geometry for airspace '${this.ident}'`;
                 if (selfIntersect != null) {
                     message += `: Self intersection at ${JSON.stringify(selfIntersect)}`;
                 }
@@ -197,20 +185,14 @@ class AirspaceConverter {
                     class: mappedClass,
                     upperCeiling,
                     lowerCeiling,
-                    activatedByNotam: rules?.includes('NOTAM') === true,
                     // set default value, will be overwritten by "metaProps" if applicable
                     activity: 'NONE',
-                    remarks: rules == null ? null : rules.join(', '),
                 },
                 // merges updated field value for fields, e.g. "activity"
                 ...metaProps,
             },
             geometry,
         };
-        // add frequency property if services are available and mapping property "id" is set
-        if (id != null && services != null) {
-            feature.properties.groundService = await this.createGroundServiceProperty(id, services);
-        }
 
         features.push(cleanDeep(feature));
         // IMPORTANT reset internal state for next airspace
@@ -219,44 +201,38 @@ class AirspaceConverter {
         return polygonFeature;
     }
 
-    createGeometry(geometryComponent) {}
-
     /**
-     * Maps ground service frequency to airspace if possible. Will return null if no mapping is found.
+     * Creates an activation period for a given feature lifetime.
      *
-     * @param {string} id
-     * @param {Object[]} services
-     * @return {Promise<Object|null>}
-     * @private
+     * @param {Object} featureLifetime
+     * @return {Object}
      */
-    async createGroundServiceProperty(id, services) {
-        if (checkTypes.nonEmptyString(id) === false) {
-            throw new Error("Missing or invalid parameter 'id'");
-        }
-        if (checkTypes.nonEmptyObject(services) === false) {
-            throw new Error("Missing or invalid parameter 'services'");
-        }
-
-        try {
-            // read services file
-            for (const service of services.service) {
-                const { callsign, controls, frequency } = service;
-                // airspace "id" is mapped to "controls"" in services file
-                if (controls?.includes(id)) {
-                    return {
-                        callsign,
-                        frequency: frequency.toString(),
-                    };
-                }
+    createActivationPeriod(featureLifetime) {
+        if (featureLifetime.hasOwnProperty('gml:TimePeriod')) {
+            const beginPosition = featureLifetime['gml:TimePeriod']['gml:beginPosition']?._text;
+            let endPosition = featureLifetime['gml:TimePeriod']['gml:endPosition']?._text;
+            // handle possible "unknown" end position - set to max date
+            if (endPosition == null) {
+                endPosition = '9999-01-01T00:00:00Z';
             }
 
-            return null;
-        } catch (e) {
-            // only warn if error
-            console.log(`WARN: Failed to map ground station services. ${e.message}`);
+            const start = new Date(beginPosition);
+            const end = new Date(endPosition);
 
-            return null;
+            return { start, end };
+        } else {
+            throw new Error(`Unknown activation period for airspace '${this.ident}'.`);
         }
+    }
+
+    /**
+     * Creates hours of operation based on the activation parameter.
+     *
+     * @param {Object} activation
+     * @return {Object}
+     */
+    createHoursOfOperation(activation) {
+        // TODO implement
     }
 
     /**
@@ -494,9 +470,7 @@ class AirspaceConverter {
             try {
                 fixedGeometry = this.createFixedPolygon(geometry.coordinates[0]);
             } catch (e) {
-                throw new Error(
-                    `Failed to create fixed geometry for airspace '${this.ident}' in sequence number '${this.seqno}'. ${e.message}`
-                );
+                throw new Error(`Failed to create fixed geometry for airspace '${this.ident}'`);
             }
         }
 
@@ -690,8 +664,6 @@ class AirspaceConverter {
      */
     reset() {
         this.ident = null;
-        this.seqno = null;
-        this.boundaryCoordinates = [];
     }
 }
 

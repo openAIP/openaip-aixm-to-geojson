@@ -1,7 +1,7 @@
 {
     "name": "@openaip/aixm-to-geojson",
-    "version": "0.5.0",
-    "description": "Converts AIXM to a simplified GeoJSON.",
+    "version": "0.1.0",
+    "description": "Experimental and incomplete converter that converts AIXM to a simplified GeoJSON. Only the bare minimum is implemented.",
     "keywords": [
         "openaip",
         "aixm",
@@ -38,7 +38,6 @@
         "update-packages": "ncu --target minor --upgrade --reject jsts && npm install"
     },
     "dependencies": {
-        "@mapbox/geojson-rewind": "^0.5.2",
         "@turf/turf": "^6.5.0",
         "ajv": "^8.12.0",
         "ajv-errors": "^3.0.0",
@@ -46,7 +45,6 @@
         "ajv-keywords": "^5.1.0",
         "check-types": "^11.2.2",
         "clean-deep": "^3.4.0",
-        "coordinate-parser": "^1.0.7",
         "jsts": "<=2.6.1",
         "xml-js": "^1.6.11"
     },
