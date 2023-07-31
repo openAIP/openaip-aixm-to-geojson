@@ -177,19 +177,19 @@ class AirspaceConverter {
         const {} = options;
         const features = [];
 
-        const properties = airspaceJson['aixm:Airspace']['aixm:timeSlice']['aixm:AirspaceTimeSlice'];
-        const identifier = airspaceJson['aixm:Airspace']['gml:identifier']?._text;
+        const properties = airspaceJson['aixm:Airspace']?.['aixm:timeSlice']?.['aixm:AirspaceTimeSlice'];
+        const identifier = airspaceJson['aixm:Airspace']?.['gml:identifier']?._text;
         const name = properties['aixm:name']?._text;
         const designator = properties['aixm:designator']?._text;
         const type = properties['aixm:type']?._text;
         const localType = properties['aixm:localType']?._text;
         const icaoClass = properties['aixm:class']?.['aixm:AirspaceLayerClass']?.['aixm:classification'] ?? null;
         const geometryComponent =
-            properties['aixm:geometryComponent']['aixm:AirspaceGeometryComponent']['aixm:theAirspaceVolume'][
+            properties['aixm:geometryComponent']?.['aixm:AirspaceGeometryComponent']?.['aixm:theAirspaceVolume']?.[
                 'aixm:AirspaceVolume'
             ];
         const featureLifetime = properties['aixm:featureLifetime'];
-        const activation = properties['aixm:activation']['aixm:AirspaceActivation'];
+        const activation = properties['aixm:activation']?.['aixm:AirspaceActivation'];
 
         // set identifier for error messages
         this.ident = `${designator} ${name} (${identifier})`;
@@ -200,7 +200,7 @@ class AirspaceConverter {
         const lowerLimit = geometryComponent['aixm:lowerLimit'];
         const lowerLimitReference = geometryComponent['aixm:lowerLimitReference'];
         const width = geometryComponent['aixm:width'];
-        const surface = geometryComponent['aixm:horizontalProjection']['aixm:Surface'];
+        const surface = geometryComponent['aixm:horizontalProjection']?.['aixm:Surface'];
         const upperCeiling = this.createCeiling(upperLimit, upperLimitReference);
         const lowerCeiling = this.createCeiling(lowerLimit, lowerLimitReference);
         const activationPeriod = this.createActivationPeriod(featureLifetime);
@@ -255,8 +255,8 @@ class AirspaceConverter {
      */
     createActivationPeriod(featureLifetime) {
         if (featureLifetime.hasOwnProperty('gml:TimePeriod')) {
-            const beginPosition = featureLifetime['gml:TimePeriod']['gml:beginPosition']?._text;
-            let endPosition = featureLifetime['gml:TimePeriod']['gml:endPosition']?._text;
+            const beginPosition = featureLifetime['gml:TimePeriod']?.['gml:beginPosition']?._text;
+            let endPosition = featureLifetime['gml:TimePeriod']?.['gml:endPosition']?._text;
             // handle possible "unknown" end position - set to max date
             if (endPosition == null) {
                 endPosition = '9999-01-01T00:00:00Z';
@@ -513,7 +513,7 @@ class AirspaceConverter {
     createPolygonFeature(boundary, width) {
         // depending on the geometry type, choose specific geometry type handler
         const geometryDefinition = boundary['gml:patches'];
-        const isPolygonPatch = geometryDefinition.hasOwnProperty('gml:PolygonPatch');
+        const isPolygonPatch = boundary['gml:patches']?.['gml:PolygonPatch'] != null;
 
         if (isPolygonPatch) {
             return this.createGeometryFromPolygonPatch(geometryDefinition);
