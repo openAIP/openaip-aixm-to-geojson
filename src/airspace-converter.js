@@ -19,8 +19,55 @@ const addFormats = require('ajv-formats');
 const ajvKeywords = require('ajv-keywords');
 
 const DEFAULT_CONFIG = require('./default-config');
-const ALLOWED_TYPES = ['CTA', 'TMA', 'CTR_P', 'CTR', 'ATZ', 'OTHER', 'D', 'P', 'R'];
-const ALLOWED_LOCALTYPES = ['MATZ', 'GLIDER', 'RMZ', 'TMZ'];
+const ALLOWED_TYPES = [
+    'NAS',
+    'FIR',
+    'FIR_P',
+    'UIR',
+    'UIR_P',
+    'CTA',
+    'CTA_P',
+    'OCA_P',
+    'OCA',
+    'UTA',
+    'UTA_P',
+    'TMA',
+    'TMA_P',
+    'CTR',
+    'CTR_P',
+    'OTA',
+    'SECTOR',
+    'SECTOR_C',
+    'TSA',
+    'CBA',
+    'RCA',
+    'RAS',
+    'AWY',
+    'MTR',
+    'P',
+    'R',
+    'D',
+    'ADIZ',
+    'NO_FIR',
+    'PART',
+    'CLASS',
+    'POLITICAL',
+    'D_OTHER',
+    'TRA',
+    'A',
+    'W',
+    'PROTECT',
+    'AMA',
+    'ASR',
+    'ADV',
+    'UADV',
+    'ATZ',
+    'ATZ_P',
+    'HTZ',
+    'NAS_P',
+    'OTHER',
+];
+const ALLOWED_LOCALTYPES = [];
 const ALLOWED_CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'NO'];
 const GEOJSON_SCHEMA = require('../schemas/geojson-schema.json');
 
@@ -136,7 +183,7 @@ class AirspaceConverter {
         const designator = properties['aixm:designator']?._text;
         const type = properties['aixm:type']?._text;
         const localType = properties['aixm:localType']?._text;
-        const icaoClass = properties['aixm:designatorICAO']?._text;
+        const icaoClass = properties['aixm:class']?.['aixm:AirspaceLayerClass']?.['aixm:classification'] ?? null;
         const geometryComponent =
             properties['aixm:geometryComponent']['aixm:AirspaceGeometryComponent']['aixm:theAirspaceVolume'][
                 'aixm:AirspaceVolume'
@@ -145,10 +192,9 @@ class AirspaceConverter {
         const activation = properties['aixm:activation']['aixm:AirspaceActivation'];
 
         // set identifier for error messages
-        this.ident = name;
+        this.ident = `${designator} ${name} (${identifier})`;
         // map to only type/class combination
-        const { type: mappedType, class: mappedClass, metaProps } = this.mapClassAndType(type, localType, icaoClass);
-
+        const classTypeMeta= this.mapClassAndType(type, localType, icaoClass);
         const upperLimit = geometryComponent['aixm:upperLimit'];
         const upperLimitReference = geometryComponent['aixm:upperLimitReference'];
         const lowerLimit = geometryComponent['aixm:lowerLimit'];
@@ -158,6 +204,7 @@ class AirspaceConverter {
         const upperCeiling = this.createCeiling(upperLimit, upperLimitReference);
         const lowerCeiling = this.createCeiling(lowerLimit, lowerLimitReference);
         const activationPeriod = this.createActivationPeriod(featureLifetime);
+        // TODO: implement
         const hoursOfOperation = this.createHoursOfOperation(activation);
         const feature = this.createPolygonFeature(surface, width);
         let geometry = feature.geometry;
@@ -180,16 +227,15 @@ class AirspaceConverter {
             // multiple airspaces, all with the same base properties.
             properties: {
                 ...{
+                    identifier,
                     name,
-                    type: mappedType,
-                    class: mappedClass,
+                    designator,
+                    ...classTypeMeta,
                     upperCeiling,
                     lowerCeiling,
-                    // set default value, will be overwritten by "metaProps" if applicable
-                    activity: 'NONE',
+                    activationPeriod,
+                    hoursOfOperation,
                 },
-                // merges updated field value for fields, e.g. "activity"
-                ...metaProps,
             },
             geometry,
         };
@@ -241,7 +287,7 @@ class AirspaceConverter {
      * @param {string} localType
      * @param {string} airspaceClass
      *
-     * @return {{type: string, class: string, [metaProps]: Object}}
+     * @return {{type: string, localType: string, class: string}}
      */
     mapClassAndType(type, localType, airspaceClass) {
         let message = `Failed to map class/type combination for airspace '${this.ident}'.`;
@@ -251,123 +297,180 @@ class AirspaceConverter {
         }
         if (localType != null && ALLOWED_LOCALTYPES.includes(localType) === false) {
             throw new Error(
-                `${message} The 'localtype' value '${localType}' is not in the list of allowed localtypes.`
+                `${message} The 'localType' value '${localType}' is not in the list of allowed localtypes.`
             );
         }
         if (airspaceClass != null && ALLOWED_CLASSES.includes(airspaceClass) === false) {
             throw new Error(`${message} The 'class' value '${airspaceClass}' is not in the list of allowed classes.`);
         }
 
-        if (type != null && airspaceClass != null) {
-            let mappedType = null;
-            let mappedClass = null;
+        let mappedType = null;
+        let mappedClass = null;
+        let mappedLocalType = null;
 
-            switch (type) {
-                case 'CTA':
-                    mappedType = 'CTA';
-                    break;
-                case 'TMA':
-                    mappedType = 'TMA';
-                    break;
-                case 'CTR':
-                case 'CTR_P':
-                    mappedType = 'CTR';
-                    break;
-                case 'ATZ':
-                    mappedType = 'ATZ';
-                    break;
-                case 'D':
-                    mappedType = 'DANGER';
-                    break;
-                case 'P':
-                    mappedType = 'PROHIBITED';
-                    break;
-                case 'R':
-                    mappedType = 'RESTRICTED';
-                    break;
-                default:
-                    throw new Error(`${message} The 'type' value '${type}' has no configured mapping.`);
-            }
-            if (ALLOWED_CLASSES.includes(airspaceClass)) {
-                // airspace class "NO" is replaced with "UNCLASSIFIED"
-                mappedClass = airspaceClass === 'NO' ? 'UNCLASSIFIED' : airspaceClass;
-            } else {
-                throw new Error(`${message} The 'class' value '${airspaceClass}' has no configured mapping.`);
-            }
-
-            return { type: mappedType, class: mappedClass };
-        } else if (type != null && localType != null) {
-            const comb = `${type}|${localType}`;
-            switch (comb) {
-                case 'OTHER|MATZ':
-                    return { type: 'MATZ', class: 'G' };
-                case 'D_OTHER|GLIDER':
-                    return { type: 'GLIDING_SECTOR', class: 'UNCLASSIFIED' };
-                // gas venting station
-                /*
-                GVS - gas venting station
-                HIRTA - high intensity radio transmission area
-                LASER - "biu biu biu"
-                ILS - ILS feather
-                 */
-                case 'D_OTHER|GVS':
-                case 'D_OTHER|HIRTA':
-                case 'D_OTHER|LASER':
-                case 'OTHER|ILS':
-                    return { type: 'WARNING', class: 'UNCLASSIFIED' };
-                case 'D_OTHER|DZ':
-                    return {
-                        type: 'AERIAL_SPORTING_RECREATIONAL',
-                        class: 'UNCLASSIFIED',
-                        metaProps: { activity: 'PARACHUTING' },
-                    };
-                case 'OTHER|GLIDER':
-                case 'OTHER|NOATZ':
-                    return {
-                        type: 'AERIAL_SPORTING_RECREATIONAL',
-                        class: 'UNCLASSIFIED',
-                        metaProps: { activity: 'AEROCLUB_AERIAL_WORK' },
-                    };
-                case 'OTHER|UL':
-                    return {
-                        type: 'AERIAL_SPORTING_RECREATIONAL',
-                        class: 'UNCLASSIFIED',
-                        metaProps: { activity: 'ULM' },
-                    };
-                case 'OTHER|RMZ':
-                    return {
-                        type: 'RMZ',
-                        class: 'UNCLASSIFIED',
-                    };
-                case 'OTHER|TMZ':
-                    return {
-                        type: 'TMZ',
-                        class: 'UNCLASSIFIED',
-                    };
-                default:
-                    throw new Error(
-                        `${message} The 'type' value '${type}' and 'localtype' value '${localType}' has no configured mapping.`
-                    );
-            }
-        } else if (type != null) {
-            switch (type) {
-                case 'ATZ':
-                case 'MATZ':
-                    return { type, class: 'G' };
-                case 'D':
-                    return { type: 'DANGER', class: 'UNCLASSIFIED' };
-                case 'P':
-                    return { type: 'PROHIBITED', class: 'UNCLASSIFIED' };
-                case 'R':
-                    return { type: 'RESTRICTED', class: 'UNCLASSIFIED' };
-                default:
-                    throw new Error(`${message} The type value '${type}' has no configured mapping.`);
-            }
+        // mapped airspace types
+        switch (type) {
+            case 'NAS':
+                mappedType = 'NAS';
+                break;
+            case 'FIR':
+            case 'FIR_P':
+                mappedType = 'FIR';
+                break;
+            case 'UIR':
+            case 'UIR_P':
+                mappedType = 'UIR';
+                break;
+            case 'CTA':
+            case 'CTA_P':
+                mappedType = 'CTA';
+                break;
+            case 'OCA_P':
+            case 'OCA':
+                mappedType = 'OCA';
+                break;
+            case 'UTA':
+            case 'UTA_P':
+                mappedType = 'UTA';
+                break;
+            case 'TMA':
+            case 'TMA_P':
+                mappedType = 'TMA';
+                break;
+            case 'CTR':
+            case 'CTR_P':
+                mappedType = 'CTR';
+                break;
+            case 'OTA':
+                mappedType = 'OTA';
+                break;
+            case 'SECTOR':
+            case 'SECTOR_C':
+                mappedType = 'SECTOR';
+                break;
+            case 'TSA':
+                mappedType = 'TSA';
+                break;
+            case 'CBA':
+                mappedType = 'CBA';
+                break;
+            case 'RCA':
+                mappedType = 'RCA';
+                break;
+            case 'RAS':
+                mappedType = 'RAS';
+                break;
+            case 'AWY':
+                mappedType = 'AWY';
+                break;
+            case 'MTR':
+                mappedType = 'MTR';
+                break;
+            case 'P':
+                mappedType = 'PROBHIBITED';
+                break;
+            case 'R':
+                mappedType = 'RESTRICTED';
+                break;
+            case 'D':
+                mappedType = 'DANGER';
+                break;
+            case 'ADIZ':
+                mappedType = 'ADIZ';
+                break;
+            case 'NO_FIR':
+                mappedType = 'NO_FIR';
+                break;
+            case 'PART':
+                mappedType = 'PART';
+                break;
+            case 'CLASS':
+                mappedType = 'CLASS';
+                break;
+            case 'POLITICAL':
+                mappedType = 'POLITICAL';
+                break;
+            case 'D_OTHER':
+                mappedType = 'D_OTHER';
+                break;
+            case 'TRA':
+                mappedType = 'TRA';
+                break;
+            case 'A':
+                mappedType = 'ALERT';
+                break;
+            case 'W':
+                mappedType = 'WARNING';
+                break;
+            case 'PROTECT':
+                mappedType = 'PROTECTED';
+                break;
+            case 'AMA':
+                mappedType = 'AMA';
+                break;
+            case 'ASR':
+                mappedType = 'ASR';
+                break;
+            case 'ADV':
+                mappedType = 'ADVISORY';
+                break;
+            case 'UADV':
+                mappedType = 'UADV';
+                break;
+            case 'ATZ':
+            case 'ATZ_P':
+                mappedType = 'ATZ';
+                break;
+            case 'HTZ':
+                mappedType = 'HTZ';
+                break;
+            case 'NAS_P':
+            case 'OTHER':
+                mappedType = 'OTHER';
+                break;
+            default:
+                throw new Error(`${message} The 'type' value '${type}' has no configured mapping.`);
         }
 
-        throw new Error(
-            `${message} No mapping for combination '${JSON.stringify({ type, localType, class: airspaceClass })}'`
-        );
+        // mapped airspace class
+        switch (airspaceClass) {
+            case 'A':
+                mappedClass = 'A';
+                break;
+            case 'B':
+                mappedClass = 'B';
+                break;
+            case 'C':
+                mappedClass = 'C';
+                break;
+            case 'D':
+                mappedClass = 'D';
+                break;
+            case 'E':
+                mappedClass = 'E';
+                break;
+            case 'F':
+                mappedClass = 'F';
+                break;
+            case 'G':
+                mappedClass = 'G';
+                break;
+            case 'NO':
+                mappedClass = 'UNCLASSIFIED';
+                break;
+            default:
+                throw new Error(`${message} The 'class' value '${airspaceClass}' has no configured mapping.`);
+        }
+
+        switch (localType) {
+            case 'RMZ':
+                mappedLocalType = 'RMZ';
+                break;
+            default:
+                throw new Error(`${message} The 'localType' value '${localType}' has no configured mapping.`);
+        }
+
+        return { type: mappedType, localType: mappedLocalType, class: mappedClass };
     }
 
     /**
